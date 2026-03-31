@@ -9,6 +9,7 @@
 
 //#define USB3
 static uint8_t is_usb3;
+static uint8_t pcie_link_up;
 
 __sfr __at(0x93) DPX;   /* DPTR bank select — DPX=1 accesses internal PHY regs */
 __sfr __at(0xA8) IE;
@@ -184,6 +185,7 @@ static void handle_usb_control(void) {
       /* PCIe TLP request — OUT phase: set fmt_type + byte_enable from wValue.
        * DATA_OUT will carry the address and value.
        * wValue = fmt_type | (byte_enable << 8) */
+      // TODO: should stall if !pcie_link_up
       REG_PCIE_FMT_TYPE = wValL;
       REG_PCIE_BYTE_EN  = wValH;
       /* Don't send ZLP — wait for DATA_OUT phase */
@@ -369,12 +371,27 @@ void main(void) {
   REG_PCIE_TLP_CTRL   = 0x01;
   REG_PCIE_TLP_LENGTH = 0x20;
 
+  // PCIe bringup
+  REG_TUNNEL_CTRL_B403 = 0x01;           // fix PCIe link stability
+  REG_PCIE_PERST_CTRL  = 0x01;           // assert PERST#
+  REG_TUNNEL_LINK_STATE = 0x00;          // clear tunnel link state
+  DPX = 0x01; XDATA_REG8(0x6025) = 0x80; DPX = 0x00;  // TLP routing enable
+  REG_HDDPC_CTRL |= 0x20;                // enable 3.3V
+  REG_PCIE_LANE_CTRL_C659 |= 0x01;       // enable 12V
+  REG_PHY_TIMER_CTRL_E764 = 0x1C;        // start link training
+
   uint8_t link = REG_USB_LINK_STATUS;
   is_usb3 = (link >= USB_SPEED_SUPER) ? 1 : 0;
   uart_puts("[GO link="); uart_puthex(link); uart_puts("]\n");
 
   // enable interrupts and chill
   IE = IE_EA | IE_EX0 | IE_EX1 | IE_ET0;
+
+  // wait for PCIe
+  while (REG_PCIE_LTSSM_STATE != 0x78);
+  REG_PCIE_PERST_CTRL = 0x00; // deassert PERST#
+  pcie_link_up = 1;
+  uart_puts("[PCIe up]\n");
 
   while (1) {
     // DO NOT PUT ANYTHING HERE, EVERYTHING SHOULD BE HANDLED IN INTERRUPTS
