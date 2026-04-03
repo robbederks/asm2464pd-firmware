@@ -596,6 +596,7 @@
 #define   USB_PERIPH_CONTROL      0x02  // Bit 1: Setup/control packet (EP0)
 #define   USB_PERIPH_BULK_DATA    0x04  // Bit 2: Bulk OUT data available
 #define   USB_PERIPH_BULK_REQ     0x08  // Bit 3: Bulk transfer request (USB 3.0)
+#define   USB_PERIPH_ALT_LINK     0x08
 #define   USB_PERIPH_LINK_EVENT   0x10  // Bit 4: Link event (speed change, cable)
 #define   USB_PERIPH_EP_COMPLETE  0x20  // Bit 5: Bulk EP completion (IN done)
 #define   USB_PERIPH_CBW_RECEIVED 0x40  // Bit 6: CBW received (bulk OUT ready)
@@ -1282,6 +1283,10 @@
 #define   NVME_DATA_CTRL_BIT7     0x80  // Bit 7: Data control high bit
 #define REG_NVME_DEV_STATUS     XDATA_REG8(0xC415)
 #define   NVME_DEV_STATUS_MASK    0xC0  // Bits 6-7: Device status
+#define REG_NVME_SLOT_START     XDATA_REG8(0xC414)  /* Bit 7: enable DMA, bits 0-6: first slot index */
+#define   NVME_SLOT_ENABLE        0x80              /* Bit 7: enable multi-slot DMA */
+#define REG_NVME_SLOT_END       XDATA_REG8(0xC415)  /* Last slot index (exclusive) */
+
 // NVMe SCSI Command Buffer (0xC4C0-0xC4CA) - used for SCSI to NVMe translation
 #define REG_NVME_SCSI_CMD_BUF_0 XDATA_REG8(0xC4C0)  // SCSI cmd buffer byte 0
 #define REG_NVME_SCSI_CMD_BUF_1 XDATA_REG8(0xC4C1)  // SCSI cmd buffer byte 1
@@ -1299,6 +1304,7 @@
 #define REG_NVME_CMD_OPCODE     XDATA_REG8(0xC421)  /* Also DMA xfer byte count low */
 #define REG_NVME_DMA_XFER_HI   XDATA_REG8(0xC420)  /* DMA transfer byte count high (alias) */
 #define REG_NVME_DMA_XFER_LO   XDATA_REG8(0xC421)  /* DMA transfer byte count low (alias) */
+#define REG_NVME_STREAM_ID      XDATA_REG8(0xC421) // this is correct, it's the stream id
 #define REG_NVME_LBA_LOW        XDATA_REG8(0xC422)
 #define REG_NVME_LBA_MID        XDATA_REG8(0xC423)
 #define REG_NVME_LBA_HIGH       XDATA_REG8(0xC424)
@@ -1307,6 +1313,8 @@
 #define REG_NVME_DMA_ADDR_C427  XDATA_REG8(0xC427)  /* DMA sector count (0x01=512B, 0x08=4096B) */
 #define REG_NVME_COUNT_HIGH     XDATA_REG8(0xC426)  /* Alias for compatibility */
 #define REG_NVME_ERROR          XDATA_REG8(0xC427)  /* Alias for compatibility */
+#define REG_NVME_SECTOR_COUNT_HI XDATA_REG8(0xC426)  /* Sector count high byte (C426:C427 = 16-bit sector count) */
+#define REG_NVME_SECTOR_COUNT_LO XDATA_REG8(0xC427)  /* Sector count low byte (1 sector = 512 bytes) */
 #define REG_NVME_QUEUE_CFG      XDATA_REG8(0xC428)
 #define   NVME_QUEUE_CFG_MASK_LO  0x03  // Bits 0-1: Queue config low
 #define   NVME_QUEUE_CFG_BIT3     0x08  // Bit 3: Queue config flag
@@ -1997,7 +2005,7 @@
  */
 #define REG_USB_DMA_ERROR       XDATA_REG8(0xCE86)  /* DMA error flags */
 #define   USB_DMA_ERROR_BIT       0x10  /* Bit 4: DMA error flag (stock check at 0x349D) */
-#define REG_BULK_DMA_HANDSHAKE  XDATA_REG8(0xCE88)  /* Write 0x00 to start bulk DMA handshake */
+#define REG_BULK_DMA_HANDSHAKE  XDATA_REG8(0xCE88)  // you write the stream_id to this register
 #define REG_USB_DMA_STATE       XDATA_REG8(0xCE89)  /* DMA handshake status */
 #define   USB_DMA_STATE_READY     0x01  /* Bit 0: DMA ready/complete (poll after CE88 write) */
 #define   USB_DMA_STATE_CBW       0x02  /* Bit 1: 1=CBW in registers, 0=bulk data at 0x7000 */
