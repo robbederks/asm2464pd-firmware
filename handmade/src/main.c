@@ -7,7 +7,7 @@
 #include "registers.h"
 #include "globals.h"
 
-static uint8_t is_usb3;
+static uint8_t is_usb2;
 static uint8_t pcie_link_up;
 
 /* Streaming PCIe DMA state — configured via 0xF0 control message */
@@ -112,20 +112,20 @@ static void handle_get_descriptor(uint8_t desc_type, uint8_t desc_idx, uint16_t 
   uint8_t desc_len;
 
   if (desc_type == USB_DESC_TYPE_DEVICE) {
-    if (is_usb3) {
-      src = dev_desc_30;
-      desc_len = sizeof(dev_desc_30);
-    } else {
+    if (is_usb2) {
       src = dev_desc;
       desc_len = sizeof(dev_desc);
+    } else {
+      src = dev_desc_30;
+      desc_len = sizeof(dev_desc_30);
     }
   } else if (desc_type == USB_DESC_TYPE_CONFIG) {
-    if (is_usb3) {
-      src = cfg_desc_30;
-      desc_len = sizeof(cfg_desc_30);
-    } else {
+    if (is_usb2) {
       src = cfg_desc;
       desc_len = sizeof(cfg_desc);
+    } else {
+      src = cfg_desc_30;
+      desc_len = sizeof(cfg_desc_30);
     }
   } else if (desc_type == USB_DESC_TYPE_BOS) {
     src = bos_desc;
@@ -421,6 +421,7 @@ void handle_usb_bulk_data(void) {
   REG_USB_EP_CFG1 = bulk_cfg1;
 }
 
+
 void int0_isr(void) __interrupt(0) {
   uint8_t int0_type = REG_INT_USB_STATUS;
   if (int0_type & INT_USB_GATE) {
@@ -437,6 +438,22 @@ void int0_isr(void) __interrupt(0) {
       uint8_t ep = REG_USB_EP_READY;
       //uart_puts("[EP_COMPLETE "); uart_puthex(ep); uart_puts(" "); uart_puthex(REG_USB_EP_STATUS_90E3); uart_puts("]\n");
       REG_USB_EP_READY = ep;
+    } else if (periph_status & USB_PERIPH_LINK_EVENT) {
+      uint8_t ep = REG_BUF_CFG_9300;
+      if (ep & BUF_CFG_9300_SS_FAIL) {
+        // fallback to USB2
+        is_usb2 = 1;
+        // without this, USB2 is flaky
+        REG_CPU_MODE = CPU_MODE_USB2;
+        // enable USB high speed mode
+        REG_USB_PHY_CTRL_91C0 = 0x10;
+      }
+      REG_BUF_CFG_9300 = ep;
+      uart_puts("[LINK EVENT ");
+      uart_puthex(ep);
+      uart_puts(" link=");
+      uart_puthex(REG_USB_LINK_STATUS);
+      uart_puts("]\n");
     } else if (periph_status & USB_PERIPH_CBW_RECEIVED) {
       // BULK OUT (but only if pointed to 0x911B)
       uint8_t ep = REG_USB_MODE;
@@ -464,16 +481,7 @@ void main(void) {
   // without this, UART has parity
   REG_UART_LCR &= ~LCR_PARITY_MASK;
 
-  #ifndef USB3
-    uart_puts("\n[BOOT USB2]\n");
-    // without this, USB2 is flaky
-    REG_CPU_MODE = CPU_MODE_USB2;
-
-    // enable USB high speed mode
-    REG_USB_PHY_CTRL_91C0 = 0x10;
-  #else
-    uart_puts("\n[BOOT USB3]\n");
-  #endif
+  uart_puts("\n[BOOT]\n");
 
   // clear this to get USB3 interrupts
   REG_POWER_STATUS &= ~POWER_STATUS_USB_PATH;
@@ -506,9 +514,8 @@ void main(void) {
   REG_PCIE_LANE_CTRL_C659 |= 0x01;       // enable 12V
   REG_PHY_TIMER_CTRL_E764 = 0x1C;        // start link training
 
-  uint8_t link = REG_USB_LINK_STATUS;
-  is_usb3 = (link >= USB_SPEED_SUPER) ? 1 : 0;
-  uart_puts("[GO link="); uart_puthex(link); uart_puts("]\n");
+  // enable USB_PERIPH_LINK_EVENT to fall back to USB2
+  REG_BUF_CFG_9303 = 0x33;
 
   // enable interrupts and chill
   IE = IE_EA | IE_EX0 | IE_EX1 | IE_ET0;
