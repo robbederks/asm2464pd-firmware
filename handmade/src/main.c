@@ -266,9 +266,7 @@ static void handle_usb_control(void) {
         DESC_BUF[5] = REG_PCIE_CPL_HDR_LO;
         DESC_BUF[6] = REG_PCIE_COMPL_STATUS;
       } else {
-        uart_puts("[PCIE ERROR ");
-        uart_puthex(ret_status);
-        uart_puts("]\n");
+        if (ret_status == 0xFF) uart_puts("[PCIE TIMEOUT]\n");
         int i;
         for (i = 0; i < 7; i++) DESC_BUF[i] = 0;
       }
