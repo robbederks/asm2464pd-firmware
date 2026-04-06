@@ -14,17 +14,16 @@ GPU_BUS = 4
 VRAM_BASE = 0x800000000
 EP_OUT = 0x02
 EP_IN = 0x81
-MAX_CHUNK_DWORDS = 0x10
 
 MWR64 = 0x60
 MRD64 = 0x20
 
 def dma_setup(handle, addr, mode, ndwords=0):
-  """0xF0: wValue = fmt_type|(be<<8), wIndex = mode. DATA_OUT = addr[8] + ndwords[4 BE]."""
+  """0xF0: wValue = fmt_type|(be<<8), wIndex = mode. DATA_OUT = addr[4 LE] + addr_hi[4 LE] + value[4 LE]."""
   fmt = {0: 0, 1: MWR64, 2: MRD64}[mode]
   wval = fmt | (0x0F << 8)
   widx = mode & 0x03
-  payload = struct.pack('<II', addr & 0xFFFFFFFF, addr >> 32) + struct.pack('>I', ndwords)
+  payload = struct.pack('<III', addr & 0xFFFFFFFF, addr >> 32, ndwords)
   buf = (ctypes.c_ubyte * 12)(*payload)
   ret = libusb.libusb_control_transfer(handle, 0x40, 0xF0, wval, widx, buf, 12, 5000)
   assert ret >= 0, f"F0 setup failed: {ret}"
@@ -61,19 +60,17 @@ def main():
   print(f"  {t_write:.3f}s ({SIZE / t_write / 1024:.1f} KB/s)")
 
   print(f"Reading {SIZE // 1024} KB from VRAM...")
-  chunk_bytes = MAX_CHUNK_DWORDS * 4
   dma_setup(handle, vram_base, 2, total_dwords)
-  resp = (ctypes.c_ubyte * chunk_bytes)()
-  result = []
+  resp = (ctypes.c_ubyte * SIZE)()
   t0 = time.monotonic()
-  while len(result) < total_dwords:
-    ret = libusb.libusb_bulk_transfer(handle, EP_IN, resp, chunk_bytes, ctypes.byref(transferred), 5000)
-    assert ret == 0, f"read failed: {ret}"
-    result.extend(struct.unpack(f'<{transferred.value // 4}I', bytes(resp[:transferred.value])))
+  ret = libusb.libusb_bulk_transfer(handle, EP_IN, resp, SIZE, ctypes.byref(transferred), 30000)
   t_read = time.monotonic() - t0
+  assert ret == 0, f"read failed: {ret} (transferred {transferred.value})"
+  assert transferred.value == SIZE, f"short read: {transferred.value}/{SIZE}"
+  result = list(struct.unpack(f'<{total_dwords}I', bytes(resp)))
 
   errors = 0
-  for i in range(total_dwords):
+  for i in range(len(result)):
     if result[i] != i:
       if errors < 10:
         print(f"  MISMATCH at dword {i}: expected 0x{i:08X}, got 0x{result[i]:08X}")
