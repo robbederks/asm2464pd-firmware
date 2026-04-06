@@ -17,9 +17,8 @@ static void uart_puthex(uint8_t val) {
 static uint8_t is_usb2;
 static uint8_t pcie_link_up;
 
-/* Streaming PCIe DMA state — configured via 0xF0 control message */
-static uint8_t dma_mode;       /* 0=idle, 1=write, 2=read */
-static int32_t dma_dwords;     /* total dwords remaining for streaming read */
+/* Streaming PCIe state — configured via 0xF0 control message */
+static uint32_t dma_dwords;    /* total dwords remaining for streaming transfer */
 
 
 #include "pcie_pio.h"
@@ -53,9 +52,9 @@ static void desc_copy(__code const uint8_t *src, uint8_t len) {
 
 /*=== USB Control Transfer Helpers ===*/
 
-static void send_control_data(uint8_t len) {
-  REG_USB_EP0_STATUS = 0x00;
-  REG_USB_EP0_LEN_L = len;
+static void send_control_data(uint16_t len) {
+  REG_USB_EP0_LEN_H = (uint8_t)(len >> 8);
+  REG_USB_EP0_LEN_L = (uint8_t)(len & 0xFF);
   REG_USB_DMA_TRIGGER = USB_DMA_SEND;
   REG_USB_CTRL_PHASE = USB_CTRL_PHASE_DATA_IN;
 }
@@ -186,18 +185,25 @@ static void handle_usb_control(void) {
       uart_puts("[A]\n");
     } else if (bmReq == USB_SETUP_DIR_DEV_TO_HOST && bReq == USB_REQ_GET_DESCRIPTOR) {
       handle_get_descriptor(wValH, wValL, wLen);
+    } else if (bmReq == USB_SETUP_RECIP_ENDPOINT && bReq == USB_REQ_CLEAR_FEATURE && wValL == 0x00) {
+      /* CLEAR_FEATURE(ENDPOINT_HALT) — reset bulk endpoint and cancel streaming.
+       * bmRequestType=0x02 (host-to-dev, standard, endpoint), wValue=0 (ENDPOINT_HALT),
+       * wIndex = endpoint address (0x02=OUT, 0x81=IN). */
+      uint8_t ep_addr = REG_USB_SETUP_WIDX_L;
+      if (ep_addr == 0x02) {
+        REG_USB_EP_CFG2 = USB_EP_CFG2_CLEAR_OUT;
+      } else if (ep_addr == 0x81) {
+        REG_USB_EP_CFG2 = USB_EP_CFG2_CLEAR_IN;
+      }
+      dma_dwords = 0;
+      send_zlp_ack();
     } else if (bmReq == USB_SETUP_DIR_HOST_TO_DEV && bReq == USB_REQ_SET_CONFIGURATION) {
       // enable USB bulk mode (bypass MSC)
       REG_USB_MSC_CFG = 0x00;
-      // enable bulk endpoint (without the clear in, it'll get a spurious IN, without the clear out, it'll miss an out)
+      // clearn bulk endpoints
       REG_USB_EP_CFG2 = USB_EP_CFG2_CLEAR_IN;
       REG_USB_EP_CFG2 = USB_EP_CFG2_CLEAR_OUT;
-      // receive to 0x911B
-      //REG_USB_BULK_EP_CMD = USB_BULK_EP_CMD_CBW;
-      // receive to 0x7000
-      //REG_USB_EP_CFG2 = USB_EP_CFG2_ARM_OUT;
-      // setup UAS mode
-      //REG_USB_STATUS = USB_STATUS_DMA_READY;
+      dma_dwords = 0;
       send_zlp_ack();
       uart_puts("[*** SET CONFIG ***]\n");
     } else if (bmReq == (USB_SETUP_DIR_DEV_TO_HOST | USB_SETUP_TYPE_VENDOR) && bReq == 0xE4) {
@@ -205,14 +211,16 @@ static void handle_usb_control(void) {
        * wIndex high byte selects bank (0=normal, 1=PHY/switch via DPX). */
       uint16_t addr = ((uint16_t)wValH << 8) | wValL;
       uint8_t bank = REG_USB_SETUP_WIDX_H;
-      uint8_t vi;
-      for (vi = 0; vi < wLen; vi++) {
+      uint16_t maxlen = is_usb2 ? 64 : 512;
+      uint16_t rlen = (wLen > maxlen) ? maxlen : wLen;
+      uint16_t vi;
+      for (vi = 0; vi < rlen; vi++) {
         if (bank) DPX = bank;
         uint8_t val = XDATA_REG8(addr + vi);
         if (bank) DPX = 0x00;
         DESC_BUF[vi] = val;
       }
-      send_control_data(wLen);
+      send_control_data(rlen);
     } else if (bmReq == (USB_SETUP_DIR_HOST_TO_DEV | USB_SETUP_TYPE_VENDOR) && bReq == 0xE5) {
       /* Vendor write XDATA via control.  wValue=addr, wIndex low=val.
        * wIndex high byte selects bank (0=normal, 1=PHY/switch via DPX). */
@@ -250,7 +258,7 @@ static void handle_usb_control(void) {
       *   wValue = fmt_type | (byte_enable << 8)
       *   wIndex low[1:0] = mode (0=single TLP, 1=stream write, 2=stream read)
       *   wIndex low[7:2] = dwords per read chunk (0 → 128 for writes)
-      *   DATA_OUT: 12 bytes = addr_lo[4 LE] + addr_hi[4 LE] + value[4 BE] */
+      *   DATA_OUT: 12 bytes = addr_lo[4 LE] + addr_hi[4 LE] + value[4 LE] */
       /* Don't configure yet — wait for DATA_OUT phase.
        * SETUP params (wValue/wIndex) are readable from registers in DATA_OUT. */
     } else if (bmReq == (USB_SETUP_DIR_DEV_TO_HOST | USB_SETUP_TYPE_VENDOR) && bReq == 0xF0) {
@@ -293,14 +301,18 @@ static void handle_usb_control(void) {
   } else if (phase & USB_CTRL_PHASE_DATA_IN || phase & USB_CTRL_PHASE_STAT_IN) {
     // USB_CTRL_PHASE_DATA_IN on USB 2.0, USB_CTRL_PHASE_STAT_IN on USB 3.0
     if (phase & USB_CTRL_PHASE_STAT_IN) REG_USB_DMA_TRIGGER = USB_DMA_STATUS_COMPLETE;
-    if (REG_USB_SETUP_BREQ == 0xF0) {
+    if (REG_USB_SETUP_BMREQ == (USB_SETUP_DIR_HOST_TO_DEV | USB_SETUP_TYPE_VENDOR) &&
+        REG_USB_SETUP_BREQ == 0xF0) {
       /* 0xF0 DATA_OUT: 12 bytes at DESC_BUF (0x9E00).
-       *   [0-3]  address low (LE), [4-7] address high (LE), [8-11] value (BE)
+       *   [0-3]  address low (LE), [4-7] address high (LE), [8-11] value (LE)
        * Read SETUP params now and configure everything atomically. */
       uint8_t fmt_type = REG_USB_SETUP_WVAL_L;
       uint8_t byte_en  = REG_USB_SETUP_WVAL_H;
       uint8_t widx_l   = REG_USB_SETUP_WIDX_L;
       uint8_t mode  = widx_l & 0x03;
+
+      /* Reset any in-flight streaming transfer so stale ISRs are no-ops. */
+      dma_dwords = 0;
 
       /* Configure PCIe TLP engine */
       REG_PCIE_FMT_TYPE   = fmt_type;
@@ -461,8 +473,8 @@ void main(void) {
   // without this, no USB interrupts
   REG_USB_CONFIG = USB_CONFIG_MSC_INIT;
 
-  // enable BULK interrupt. mislabeled
-  REG_USB_EP0_LEN_H = 0xF0;
+  // enable BULK interrupt
+  REG_USB_EP0_CFG = 0xF0;
 
   // enables EP_COMPLETE interrupts
   REG_USB_DATA_L = 0x00;
