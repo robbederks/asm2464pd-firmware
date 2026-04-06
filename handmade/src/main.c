@@ -20,54 +20,9 @@ static uint8_t pcie_link_up;
 /* Streaming PCIe DMA state — configured via 0xF0 control message */
 static uint8_t dma_mode;       /* 0=idle, 1=write, 2=read */
 static int32_t dma_dwords;     /* total dwords remaining for streaming read */
-static uint8_t dma_addr_0;     /* shadow of ADDR_3 (addr[7:0]) — written BEFORE trigger */
-static uint8_t dma_addr_1;     /* shadow of ADDR_2 (addr[15:8]) */
-static uint8_t dma_addr_2;     /* shadow of ADDR_1 (addr[23:16]) */
-static uint8_t dma_addr_3;     /* shadow of ADDR_0 (addr[31:24]) */
 
-static inline void dma_addr_inc(void) {
-  dma_addr_0 += 4;
-  REG_PCIE_ADDR_3 = dma_addr_0;
-  if (dma_addr_0 < 4) {
-    dma_addr_1++;
-    REG_PCIE_ADDR_2 = dma_addr_1;
-    if (dma_addr_1 == 0) {
-      dma_addr_2++;
-      REG_PCIE_ADDR_1 = dma_addr_2;
-      if (dma_addr_2 == 0) {
-        dma_addr_3++;
-        REG_PCIE_ADDR_0 = dma_addr_3;
-      }
-    }
-  }
-}
 
-static inline void pcie_read_chunk(__xdata uint8_t *dst, uint16_t cnt) {
-  uint16_t ci;
-  for (ci = 0; ci < cnt; ci++) {
-    REG_PCIE_STATUS  = PCIE_STATUS_ERROR | PCIE_STATUS_COMPLETE | PCIE_STATUS_KICK;
-    REG_PCIE_TRIGGER = PCIE_TRIGGER_EXEC;
-    while (!(REG_PCIE_STATUS & (PCIE_STATUS_ERROR | PCIE_STATUS_COMPLETE)));
-    *dst++ = REG_PCIE_DATA_3;
-    *dst++ = REG_PCIE_DATA_2;
-    *dst++ = REG_PCIE_DATA_1;
-    *dst++ = REG_PCIE_DATA_0;
-    dma_addr_inc();
-  }
-}
-
-static inline void pcie_write_chunk(__xdata uint8_t *src, uint16_t cnt) {
-  uint16_t ci;
-  for (ci = 0; ci < cnt; ci++) {
-    REG_PCIE_DATA_3 = *src++;
-    REG_PCIE_DATA_2 = *src++;
-    REG_PCIE_DATA_1 = *src++;
-    REG_PCIE_DATA_0 = *src++;
-    REG_PCIE_STATUS  = PCIE_STATUS_ERROR | PCIE_STATUS_COMPLETE | PCIE_STATUS_KICK;
-    REG_PCIE_TRIGGER = PCIE_TRIGGER_EXEC;
-    dma_addr_inc();
-  }
-}
+#include "pcie_pio.h"
 
 static void do_usb_bulk_in(void) {
   uint16_t max_dwords = is_usb2 ? (512/4) : (1024/4);
@@ -372,11 +327,7 @@ static void handle_usb_control(void) {
         REG_PCIE_STATUS  = PCIE_STATUS_KICK;
         REG_PCIE_TRIGGER = PCIE_TRIGGER_EXEC;
       } else {
-        /* Streaming: set address shadows for auto-increment, read dword count from value field (LE) */
-        dma_addr_0 = DESC_BUF[0];
-        dma_addr_1 = DESC_BUF[1];
-        dma_addr_2 = DESC_BUF[2];
-        dma_addr_3 = DESC_BUF[3];
+        /* Streaming: read dword count from value field (LE), ADDR regs already set above */
         dma_dwords = ((uint32_t)DESC_BUF[11] << 24) | ((uint32_t)DESC_BUF[10] << 16) |
                      ((uint32_t)DESC_BUF[9] << 8) | DESC_BUF[8];
         if (dma_dwords > 0) {
