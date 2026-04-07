@@ -1594,17 +1594,21 @@
 // SPI Flash Controller (0xC89F-0xC8AE)
 //=============================================================================
 #define REG_FLASH_CON           XDATA_REG8(0xC89F)
-#define REG_FLASH_ADDR_LO       XDATA_REG8(0xC8A1)
-#define REG_FLASH_ADDR_MD       XDATA_REG8(0xC8A2)
-#define REG_FLASH_DATA_LEN      XDATA_REG8(0xC8A3)
-#define REG_FLASH_DATA_LEN_HI   XDATA_REG8(0xC8A4)
-#define REG_FLASH_DIV           XDATA_REG8(0xC8A6)
-#define REG_FLASH_CSR           XDATA_REG8(0xC8A9)
-#define   FLASH_CSR_BUSY          0x01  // Bit 0: Flash controller busy
-#define REG_FLASH_CMD           XDATA_REG8(0xC8AA)
-#define REG_FLASH_ADDR_HI       XDATA_REG8(0xC8AB)
-#define REG_FLASH_ADDR_LEN      XDATA_REG8(0xC8AC)
-#define   FLASH_ADDR_LEN_MASK     0xFC  // Bits 2-7: Address length (upper bits)
+#define REG_FLASH_ADDR_LO       XDATA_REG8(0xC8A1)  /* SPI addr[7:0] */
+#define REG_FLASH_ADDR_MD       XDATA_REG8(0xC8A2)  /* SPI addr[15:8] */
+#define REG_FLASH_DATA_PAGE_CNT XDATA_REG8(0xC8A3)  /* Transfer length: page count (256 bytes per page) */
+#define REG_FLASH_DATA_BYTE_OFS XDATA_REG8(0xC8A4)  /* Transfer length: byte offset within page */
+#define REG_FLASH_DATA_LEN      REG_FLASH_DATA_PAGE_CNT  /* Legacy alias */
+#define REG_FLASH_DATA_LEN_HI   REG_FLASH_DATA_BYTE_OFS  /* Legacy alias */
+#define REG_FLASH_DIV           XDATA_REG8(0xC8A6)  /* SPI clock divider */
+#define REG_FLASH_CSR           XDATA_REG8(0xC8A9)  /* Write 0x01 to trigger transaction */
+#define   FLASH_CSR_BUSY          0x01  // Bit 0: Transaction in progress
+#define REG_FLASH_CMD           XDATA_REG8(0xC8AA)  /* SPI command byte */
+#define REG_FLASH_ADDR_HI       XDATA_REG8(0xC8AB)  /* SPI addr[23:16] */
+#define REG_FLASH_ADDR_LEN      XDATA_REG8(0xC8AC)  /* SPI address mode control */
+#define   FLASH_ADDR_LEN_MASK     0xFC  // Bits 2-7 (stock code reads & masks these)
+#define   FLASH_ADDR_LEN_NOADDR   0x04  // No address bytes sent (bits 0-1 = 0)
+#define   FLASH_ADDR_LEN_3BYTE    0x07  // 3 address bytes sent (bits 0-1 = 0x03)
 #define REG_FLASH_MODE          XDATA_REG8(0xC8AD)
 #define   FLASH_MODE_ENABLE       0x01  // Bit 0: Flash mode enable
 #define REG_FLASH_BUF_OFFSET    XDATA_REG16(0xC8AE)
@@ -1693,8 +1697,18 @@
 #define REG_CPU_MODE            XDATA_REG8(0xCC30)
 #define   CPU_MODE_USB2           0x00  // Force USB 2.0 High Speed (fallback)
 #define   CPU_MODE_USB3           0x01  // USB 3.0 SuperSpeed capable (boot default)
-#define REG_CPU_EXEC_CTRL       XDATA_REG8(0xCC31)  /* CPU execution control */
-#define   CPU_EXEC_ENABLE         0x01  // Bit 0: Execution enable
+/*
+ * CPU Reset (0xCC31)
+ * Writing bit 0 restarts the CPU from CODE address 0 (re-executes crt0 + main)
+ * AND triggers USB re-enumeration. Device comes back in ~0.32s.
+ * CODE RAM and XDATA are preserved — does NOT reload from SPI flash.
+ * CC28 is NOT needed — CC31 bit 0 alone does the full reset + USB re-enum.
+ * Bits 1-7 have no effect (writes ignored, always read back 0).
+ * Self-clearing: reads back 0x00 after reset completes.
+ */
+#define REG_CPU_RESET           XDATA_REG8(0xCC31)  /* Write 0x01 to restart CPU + USB */
+#define REG_CPU_EXEC_CTRL       REG_CPU_RESET       /* Legacy alias for pcie.c */
+#define   CPU_RESET_TRIGGER       0x01              /* Bit 0: Trigger CPU restart + USB re-enum (self-clearing) */
 #define REG_CPU_EXEC_STATUS     XDATA_REG8(0xCC32)  /* CPU execution status */
 #define   CPU_EXEC_STATUS_ACTIVE  0x01  // Bit 0: CPU execution active
 #define REG_CPU_EXEC_STATUS_2   XDATA_REG8(0xCC33)  /* CPU execution status 2 */
@@ -1730,13 +1744,34 @@
 #define   TIMER_CTRL_ENABLE       0x01              /* Bit 0: Timer active */
 #define   TIMER_CTRL_LINK_POWER   0x02              /* Bit 1: SS link power control (cleared in 91D1 handlers) */
 /*
- * CPU Keepalive (0xCC2A)
- * Written in main loop to prevent watchdog reset.
- * Main loop writes 0x0C every iteration.
+ * USB Power Cycle (0xCC28)
+ * Writing 0x01 power-cycles the USB controller, causing the host to
+ * detect a disconnect/reconnect and re-enumerate the device.
+ * The CPU keeps running — CODE RAM and firmware state are preserved.
+ * After write, CC28 reads back as 0x01. On hardware pin reset, CC28 is 0x00.
+ * NOTE: CC31 bit 0 alone also triggers USB re-enum, so CC28 is redundant
+ * for reset purposes. CC28 is USB-only (no CPU restart).
  */
-#define REG_CPU_KEEPALIVE       XDATA_REG8(0xCC2A)  /* Write 0x0C in main loop */
-#define REG_CPU_KEEPALIVE_CC2C  XDATA_REG8(0xCC2C)  /* Keepalive param (init: 0xC7) */
-#define REG_CPU_KEEPALIVE_CC2D  XDATA_REG8(0xCC2D)  /* Keepalive param (init: 0xC7) */
+#define REG_USB_POWER_CYCLE     XDATA_REG8(0xCC28)  /* Write 0x01 to power-cycle USB (no CPU restart) */
+#define   USB_POWER_CYCLE_TRIGGER 0x01              /* Bit 0: Trigger */
+/*
+ * Timer Config (0xCC2A / 0xCC2C / 0xCC2D)
+ * NOT a hardware watchdog. These are timer mode/config registers used by the
+ * stock firmware's software event system. No autonomous hardware countdown or
+ * auto-reset occurs — tested exhaustively with all modes (0-7), all timeout
+ * values, with/without petting, from both host (E5) and firmware.
+ *
+ * Stock firmware usage:
+ *   Init:  CC2A = (CC2A & 0xF8) | 0x04  (set mode 4 in bits[2:0])
+ *          CC2C = 0xC7, CC2D = 0xC7     (timer parameters)
+ *   Loop:  CC2A = 0x0C                  (0x04 | 0x08, bit 3 = strobe)
+ *
+ * Bits[2:0] = mode select, bit 3 = strobe/ack, bits[5:4] = r/w,
+ * bits[7:6] = masked off (writes ignored, read as 0).
+ */
+#define REG_TIMER_CFG_CC2A      XDATA_REG8(0xCC2A)  /* Timer mode config (not a watchdog) */
+#define REG_TIMER_CFG_CC2C      XDATA_REG8(0xCC2C)  /* Timer parameter (stock init: 0xC7) */
+#define REG_TIMER_CFG_CC2D      XDATA_REG8(0xCC2D)  /* Timer parameter (stock init: 0xC7) */
 /*
  * LTSSM State Register (0xCC3D)
  * Link Training and Status State Machine state control.
