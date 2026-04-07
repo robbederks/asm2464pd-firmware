@@ -8,10 +8,8 @@ Usage:
 """
 
 import os, sys, struct, ctypes, time, types
-os.environ.setdefault("CUSTOM", "1")
 os.environ.setdefault("GMMU", "0")
-os.environ.setdefault("DEV", "AMD")
-os.environ.setdefault("AMD_IFACE", "USB")
+os.environ.setdefault("DEV", "USB+AMD")
 
 from tinygrad import Device
 from tinygrad.runtime.ops_amd import AMDDevice, AMDCopyQueue
