@@ -1,6 +1,6 @@
 Your goal is to make:
 
-GMMU=0 AM_DEBUG=2 DEBUG=5 USE_BOT=1 PYTHONPATH="." AMD=1 AMD_IFACE=USB python3 test/test_tiny.py TestTiny.test_plus
+DEBUG=2 PYTHONPATH="." DEV=USB+AMD python3 test/test_tiny.py TestTiny.test_plus
 
 work with the custom firmware in handmade/src/main.c
 

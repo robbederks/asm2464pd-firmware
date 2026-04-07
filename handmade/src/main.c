@@ -15,7 +15,6 @@ static void uart_puthex(uint8_t val) {
 }
 
 static uint8_t is_usb2;
-static uint8_t pcie_link_up;
 
 /* Streaming PCIe state — configured via 0xF0 control message */
 static uint32_t dma_dwords;    /* total dwords remaining for streaming transfer */
@@ -112,7 +111,7 @@ static __code const uint8_t bos_desc[] = {
 };
 static __code const uint8_t str0_desc[] = { 0x04, 0x03, 0x09, 0x04 };
 static __code const uint8_t str1_desc[] = { 0x0A, 0x03, 't',0, 'i',0, 'n',0, 'y',0 };
-static __code const uint8_t str2_desc[] = { 0x08, 0x03, 'u',0, 's',0, 'b',0 };
+static __code const uint8_t str2_desc[] = { 0x18, 0x03, 'c',0, 'u',0, 's',0, 't',0, 'o',0, 'm',0, ' ',0, 'v',0, '0',0, '.',0, '1',0 };
 static __code const uint8_t str3_desc[] = { 0x08, 0x03, '0',0, '0',0, '1',0 };
 static __code const uint8_t str_empty[] = { 0x02, 0x03 };
 
@@ -505,8 +504,18 @@ void main(void) {
   // wait for PCIe
   while (REG_PCIE_LTSSM_STATE != 0x78);
   REG_PCIE_PERST_CTRL = 0x00; // deassert PERST#
-  pcie_link_up = 1;
-  uart_puts("[PCIe up]\n");
+  if (REG_SYS_CTRL_E765 & SYS_CTRL_E765_PCIE_LINK_UP) {
+    DPX = 0x01;
+    uint8_t link_info = REG_PHY_PCIE_LINK_INFO;
+    DPX = 0x00;
+    uart_puts("[PCIe up Gen");
+    uart_puthex(link_info & 0x0F);
+    uart_puts(" x");
+    uart_puthex((link_info >> 4) & 0x0F);
+    uart_puts("]\n");
+  } else {
+    uart_puts("[PCIe LinkDn]\n");
+  }
 
   while (1) {
     // DO NOT PUT ANYTHING HERE, EVERYTHING SHOULD BE HANDLED IN INTERRUPTS

@@ -2340,6 +2340,7 @@
  */
 #define REG_PHY_TIMER_CTRL_E764 XDATA_REG8(0xE764)
 #define REG_SYS_CTRL_E765       XDATA_REG8(0xE765)  /* System control E765 */
+#define   SYS_CTRL_E765_PCIE_LINK_UP  0x02           /*   Bit 1: PCIe link is up */
 #define REG_SYS_CTRL_E76C       XDATA_REG8(0xE76C)  /* System control */
 #define REG_SYS_CTRL_E774       XDATA_REG8(0xE774)  /* System control */
 #define REG_SYS_CTRL_E77C       XDATA_REG8(0xE77C)  /* System control */
@@ -2429,6 +2430,7 @@
  *   0x7BAF  PHY lane 3 register             (stock sets bit 7)
  */
 #define REG_PHY_PORT0_CFG       XDATA_REG8(0x4084)  /* Switch port 0 PHY config (bank 1) */
+#define REG_PHY_PCIE_LINK_INFO  XDATA_REG8(0x4092)  /* PCIe link info (bank 1): low nibble=gen, high nibble=lanes */
 #define REG_PHY_PORT1_CFG       XDATA_REG8(0x5084)  /* Switch port 1 PHY config (bank 1) */
 #define REG_PHY_TLP_ROUTING     XDATA_REG8(0x6025)  /* TLP routing control (bank 1) */
 #define   PHY_TLP_ROUTING_ENABLE  0x80               /*   Bit 7: enable TLP routing */
