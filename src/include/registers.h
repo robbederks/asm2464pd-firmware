@@ -1665,7 +1665,7 @@
 // Timer Registers (0xCC10-0xCC24)
 //=============================================================================
 #define REG_TIMER0_DIV          XDATA_REG8(0xCC10)
-#define REG_TIMER0_CSR          XDATA_REG8(0xCC11)
+#define REG_TIMER0_CSR          XDATA_REG8V(0xCC11)
 #define   TIMER_CSR_ENABLE        0x01  // Bit 0: Timer enable
 #define   TIMER_CSR_EXPIRED       0x02  // Bit 1: Timer expired flag
 #define   TIMER_CSR_CLEAR         0x04  // Bit 2: Clear interrupt
