@@ -1,6 +1,18 @@
 #include "types.h"
 #include "registers.h"
 
+/*
+ * Stock 7900 XTX trace-derived PCIe PHY tuning.
+ *
+ * These are bank-1 (DPX=1) internal PHY/switch-plane writes, not standard PCIe
+ * config-space registers. The sequence below is copied from:
+ *   trace/pcie_7900XTX lines 719..1399
+ * and is organized as four repeated lane slices plus four repeated companion
+ * slices:
+ *   lane slices:      0x78xx, 0x79xx, 0x7Axx, 0x7Bxx
+ *   companion slices: 0x60xx, 0x64xx, 0x68xx, 0x6Cxx
+ */
+
 static void bank1_write(uint16_t addr, uint8_t val) {
   DPX = 0x01;
   XDATA_REG8(addr) = val;
@@ -13,6 +25,7 @@ static void bank1_or_bits(uint16_t addr, uint8_t mask) {
   DPX = 0x00;
 }
 
+/* Per-slice setup from stock trace 807..838. */
 static void pcie_apply_rxphy_lane_stage0(uint16_t lane_base) {
   bank1_write(lane_base + 0x64, 0x0F);
   bank1_write(lane_base + 0xBF, 0xB0);
@@ -20,6 +33,7 @@ static void pcie_apply_rxphy_lane_stage0(uint16_t lane_base) {
   bank1_write(lane_base + 0x67, 0xD0);
 }
 
+/* Preamble from stock trace 719..806, repeated for each lane/companion slice. */
 static void pcie_apply_rxphy_preamble(uint16_t lane_base, uint16_t companion_base) {
   bank1_write(lane_base + 0x9B, 0x10);
   bank1_write(lane_base + 0x9B, 0x90);
@@ -35,6 +49,7 @@ static void pcie_apply_rxphy_preamble(uint16_t lane_base, uint16_t companion_bas
   bank1_write(companion_base + 0x05, 0x8A);
 }
 
+/* Per-slice follow-up block from stock trace 839..902. */
 static void pcie_apply_rxphy_lane_stage1(uint16_t lane_base) {
   bank1_write(lane_base + 0x40, 0x01);
   bank1_write(lane_base + 0x01, 0x7C);
@@ -43,6 +58,7 @@ static void pcie_apply_rxphy_lane_stage1(uint16_t lane_base) {
   bank1_write(lane_base + 0x31, 0xF0);
 }
 
+/* Main per-slice payload from stock trace 903..1237. */
 static void pcie_apply_rxphy_lane_stage2(uint16_t lane_base) {
   bank1_write(lane_base + 0x34, 0x07);
   bank1_write(lane_base + 0x35, 0x6D);
@@ -73,6 +89,7 @@ static void pcie_apply_rxphy_lane_stage2(uint16_t lane_base) {
   bank1_write(lane_base + 0x6C, 0x6C);
 }
 
+/* Matching companion-slice payload from stock trace 951..1231. */
 static void pcie_apply_rxphy_companion_profile(uint16_t companion_base) {
   bank1_write(companion_base + 0x20, 0x60);
   bank1_write(companion_base + 0x20, 0x10);
@@ -99,6 +116,7 @@ static void pcie_apply_rxphy_companion_profile(uint16_t companion_base) {
   bank1_write(companion_base + 0x2B, 0xC9);
 }
 
+/* Final per-slice adjustments from stock trace 1287..1399. */
 static void pcie_apply_rxphy_tail(uint16_t lane_base, uint16_t companion_base, uint8_t tail_0b) {
   bank1_write(lane_base + 0x87, 0x10);
   bank1_write(lane_base + 0x88, 0x08);
@@ -117,6 +135,17 @@ static void pcie_apply_rxphy_tail(uint16_t lane_base, uint16_t companion_base, u
   bank1_write(lane_base + 0x3D, 0x5A);
 }
 
+/*
+ * Full stock sequence ported from trace/pcie_7900XTX:
+ *   719..806   preamble
+ *   807..1286  main programming
+ *   1287..1399 tail adjustments
+ *
+ * The only intentional per-lane variation in this helper is tail_0b:
+ *   lanes 0/1 -> 0x56
+ *   lanes 2/3 -> 0x5C
+ * matching the stock trace.
+ */
 static void pcie_apply_x2_rxphy_tuning(void) {
   static __code const uint8_t lane_hi[] = {0x78, 0x79, 0x7A, 0x7B};
   static __code const uint8_t companion_hi[] = {0x60, 0x64, 0x68, 0x6C};
