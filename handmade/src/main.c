@@ -15,7 +15,7 @@ __sfr __at(0x88) TCON;
 #define IE_ET0  0x02
 #define IE_EX0  0x01
 
-void uart_putc(uint8_t ch) { REG_UART_THR = ch; }
+void uart_putc(uint8_t ch) { while (!REG_UART_TFBF); REG_UART_THR = ch; }
 void uart_puts(__code const char *str) { while (*str) uart_putc(*str++); }
 static void uart_puthex(uint8_t val) {
   static __code const char hex[] = "0123456789ABCDEF";
@@ -43,6 +43,22 @@ static uint32_t dma_dwords;    /* total dwords remaining for streaming transfer 
 #include "pcie_pio.h"
 #include "pcie_tuning.h"
 #include "usb_tuning.h"
+#include "i2c.h"
+
+/* Hardware status packet returned by vendor request 0xC0. */
+typedef struct {
+  uint16_t voltage_mv;   /* INA231 bus voltage */
+  int16_t  current_ma;   /* INA231 shunt current (signed) */
+} hw_status_t;
+
+static void hw_status_read(hw_status_t *s) {
+  uint16_t shunt_raw = 0, bus_raw = 0;
+  (void)ina231_read_u16(INA231_REG_SHUNT, &shunt_raw);
+  (void)ina231_read_u16(INA231_REG_BUS, &bus_raw);
+  s->voltage_mv = (uint16_t)(((uint32_t)bus_raw * 125) / 100);               /* 1.25 mV/LSB */
+  s->current_ma = (int16_t)(((int32_t)(int16_t)shunt_raw * 2500)             /* shunt uV × 1000 */
+                            / INA231_SHUNT_UOHM);                            /* / R (uOhm) = mA */
+}
 
 static void pcie_power_off(void) {
   /* Hold the downstream device in reset before removing its rails. */
@@ -269,6 +285,15 @@ static void handle_usb_control(void) {
       REG_USB_EP_CFG2 = USB_EP_CFG2_CLEAR_OUT;
       dma_dwords = 0;
       send_zlp_ack();
+    } else if (bmReq == (USB_SETUP_DIR_DEV_TO_HOST | USB_SETUP_TYPE_VENDOR) && bReq == 0xC0) {
+      /* 0xC0 IN: hw_status_t (voltage_mv, current_ma). */
+      hw_status_t s;
+      hw_status_read(&s);
+      DESC_BUF[0] = (uint8_t)(s.voltage_mv & 0xFF);
+      DESC_BUF[1] = (uint8_t)(s.voltage_mv >> 8);
+      DESC_BUF[2] = (uint8_t)((uint16_t)s.current_ma & 0xFF);
+      DESC_BUF[3] = (uint8_t)((uint16_t)s.current_ma >> 8);
+      send_control_data(sizeof(hw_status_t));
     } else if (bmReq == (USB_SETUP_DIR_DEV_TO_HOST | USB_SETUP_TYPE_VENDOR) && bReq == 0xE4) {
       /* Vendor read XDATA via control.  wValue=addr, wLength=size.
        * wIndex high byte selects bank (0=normal, 1=PHY/switch via DPX). */
@@ -573,10 +598,11 @@ void main(void) {
   // enable USB_PERIPH_LINK_EVENT to fall back to USB2
   REG_BUF_CFG_9303 = 0x33;
 
-  // enable interrupts and chill
+  // enable interrupts
   IE = IE_EA | IE_EX0 | IE_EX1 | IE_ET0;
 
-  while (1) {
-    // DO NOT PUT ANYTHING HERE, EVERYTHING SHOULD BE HANDLED IN INTERRUPTS
-  }
+  i2c_init();
+  ina231_init();
+
+  while (1) {}
 }
